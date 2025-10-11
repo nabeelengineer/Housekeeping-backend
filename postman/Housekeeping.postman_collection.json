@@ -1,0 +1,517 @@
+{
+  "info": {
+    "_postman_id": "d2a2e1b8-8b4a-4e9f-9c22-000000000001",
+    "name": "Housekeeping Backend API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Postman collection for Housekeeping backend. Uses {{baseUrl}} and {{token}} variables."
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Signup",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/auth/signup", "host": ["{{baseUrl}}"], "path": ["api","auth","signup"]},
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employee_id\": \"E-1001\",\n  \"name\": \"John Doe\",\n  \"phone_no\": \"8888888888\",\n  \"email\": \"john@example.com\",\n  \"password\": \"pass1234\",\n  \"confirm_password\": \"pass1234\",\n  \"department_id\": \"D-HR\"\n}"
+            },
+            "description": "Registers a new employee. All fields required."
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api","auth","login"]},
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employee_id\": \"E-1001\",\n  \"password\": \"pass1234\"\n}"
+            },
+            "description": "Returns JWT token and auto-saves it to the environment variable {{token}} via Tests script."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try {",
+                  "  const res = pm.response.json();",
+                  "  if (res && res.token) {",
+                  "    pm.environment.set('token', res.token);",
+                  "  } else {",
+                  "    pm.environment.unset('token');",
+                  "  }",
+                  "  pm.test('Received JWT token', function () {",
+                  "    pm.expect(res.token, 'token').to.be.a('string').and.to.have.length.greaterThan(0);",
+                  "  });",
+                  "} catch (e) {",
+                  "  pm.environment.unset('token');",
+                  "  pm.test('Response is JSON with token', function () {",
+                  "    pm.expect.fail('Login response did not contain a JSON token');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Forgot - Request OTP",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "url": {"raw": "{{baseUrl}}/api/auth/forgot/request-otp", "host": ["{{baseUrl}}"], "path": ["api","auth","forgot","request-otp"]},
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone_no\": \"8888888888\"\n}"
+            },
+            "description": "Requests OTP to reset password. In dev, API returns OTP in response."
+          },
+          "response": []
+        },
+        {
+          "name": "Forgot - Verify & Reset",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "url": {"raw": "{{baseUrl}}/api/auth/forgot/verify", "host": ["{{baseUrl}}"], "path": ["api","auth","forgot","verify"]},
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone_no\": \"8888888888\",\n  \"otp_code\": \"123456\",\n  \"new_password\": \"newpass123\",\n  \"confirm_password\": \"newpass123\"\n}"
+            },
+            "description": "Verifies OTP and sets new password."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Departments",
+      "item": [
+        {
+          "name": "List Departments",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/departments", "host": ["{{baseUrl}}"], "path": ["api","departments"]},
+            "description": "Lists all departments (auth required)."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Department (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/departments", "host": ["{{baseUrl}}"], "path": ["api","departments"]},
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dept_id\": \"D-OPS\",\n  \"dept_name\": \"Operations\"\n}"
+            },
+            "description": "Admin only."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Categories",
+      "item": [
+        {
+          "name": "List Categories",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/categories", "host": ["{{baseUrl}}"], "path": ["api","categories"]},
+            "description": "Lists all categories (auth required)."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Category (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/categories", "host": ["{{baseUrl}}"], "path": ["api","categories"]},
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category_id\": \"C-NET\",\n  \"category_name\": \"Networking\"\n}"
+            },
+            "description": "Admin only."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Employees",
+      "item": [
+        {
+          "name": "Get Me",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/employees/me", "host": ["{{baseUrl}}"], "path": ["api","employees","me"]},
+            "description": "Returns current user details."
+          },
+          "response": []
+        },
+        {
+          "name": "List All Employees (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/employees", "host": ["{{baseUrl}}"], "path": ["api","employees"]},
+            "description": "Admin only."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Employee (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/employees", "host": ["{{baseUrl}}"], "path": ["api","employees"]},
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employee_id\": \"ENE002\",\n  \"name\": \"Dexter\",\n  \"phone_no\": \"9876543210\",\n  \"email\": \"dexter@example.com\",\n  \"password\": \"pass1234\",\n  \"department_id\": \"D-IT\",\n  \"role\": \"staff\"\n}"
+            },
+            "description": "Creates an employee with hashed password and initial role. Admin only."
+          },
+          "response": []
+        },
+        {
+          "name": "Set Role (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/employees/ENE001/role", "host": ["{{baseUrl}}"], "path": ["api","employees","ENE001","role"]},
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"staff\"\n}"
+            },
+            "description": "Changes role for a user. Guards: cannot change own role; cannot change role of any admin user. Admin only."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Requests",
+      "item": [
+        {
+          "name": "Create Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/requests", "host": ["{{baseUrl}}"], "path": ["api","requests"]},
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"complaint\",\n  \"description\": \"AC not cooling\",\n  \"priority\": \"high\",\n  \"department_ids\": [\"D-IT\"],\n  \"category_ids\": [\"C-AC\"]\n}"
+            },
+            "description": "Creates a new request."
+          },
+          "response": []
+        },
+        {
+          "name": "List Requests (with filters)",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/api/requests?status=pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","requests"],
+              "query": [{"key": "status", "value": "pending"}]
+            },
+            "description": "List requests. Role-based filtering applies."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Request by ID",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/requests/REQ-12345678", "host": ["{{baseUrl}}"], "path": ["api","requests","REQ-12345678"]},
+            "description": "Fetch single request."
+          },
+          "response": []
+        },
+        {
+          "name": "Assign Request (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/requests/REQ-12345678/assign", "host": ["{{baseUrl}}"], "path": ["api","requests","REQ-12345678","assign"]},
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"staff_id\": \"E-ADMIN\"\n}"
+            },
+            "description": "Admin assigns to staff and moves to in_progress."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/requests/REQ-12345678/status", "host": ["{{baseUrl}}"], "path": ["api","requests","REQ-12345678","status"]},
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"closed\"\n}"
+            },
+            "description": "Updates status. Allowed: pending, in_progress, closed. When set to closed, backend sets closed_date automatically."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Market (Buy/Sell)",
+      "item": [
+        {
+          "name": "Create Product (3-5 images)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/market/products", "host": ["{{baseUrl}}"], "path": ["api","market","products"]},
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {"key": "name", "value": "Sample Product", "type": "text"},
+                {"key": "description", "value": "Nice item", "type": "text"},
+                {"key": "images", "type": "file", "src": []},
+                {"key": "images", "type": "file", "src": []},
+                {"key": "images", "type": "file", "src": []}
+              ]
+            },
+            "description": "Auth required. Upload 3-5 images."
+          },
+          "response": []
+        },
+        {
+          "name": "List Products (active)",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/api/market/products?status=active&search=",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","market","products"],
+              "query": [
+                {"key": "status", "value": "active"},
+                {"key": "search", "value": ""}
+              ]
+            },
+            "description": "Employees see active products."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Product by ID",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/market/products/1", "host": ["{{baseUrl}}"], "path": ["api","market","products","1"]},
+            "description": "Includes images and seller contact fields."
+          },
+          "response": []
+        },
+        {
+          "name": "I'm Interested",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/market/products/1/interest", "host": ["{{baseUrl}}"], "path": ["api","market","products","1","interest"]},
+            "description": "No message; rate limited to one per buyer/product."
+          },
+          "response": []
+        },
+        {
+          "name": "Add Comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/market/products/1/comments", "host": ["{{baseUrl}}"], "path": ["api","market","products","1","comments"]},
+            "body": {"mode": "raw", "raw": "{\n  \"text\": \"Is it available?\"\n}"},
+            "description": "Add a comment to a product."
+          },
+          "response": []
+        },
+        {
+          "name": "List Comments",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/market/products/1/comments", "host": ["{{baseUrl}}"], "path": ["api","market","products","1","comments"]}
+          },
+          "response": []
+        },
+        {
+          "name": "Flag Product",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/market/products/1/flags", "host": ["{{baseUrl}}"], "path": ["api","market","products","1","flags"]},
+            "body": {"mode": "raw", "raw": "{\n  \"reason\": \"Inappropriate\"\n}"}
+          },
+          "response": []
+        },
+        {
+          "name": "Admin - List Flags",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {
+              "raw": "{{baseUrl}}/api/market/admin/flags?status=open",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","market","admin","flags"],
+              "query": [{"key": "status", "value": "open"}]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Admin - Resolve Flag (Keep)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/market/admin/flags/1", "host": ["{{baseUrl}}"], "path": ["api","market","admin","flags","1"]},
+            "body": {"mode": "raw", "raw": "{\n  \"action\": \"keep\",\n  \"adminNotes\": \"Reviewed\"\n}"}
+          },
+          "response": []
+        },
+        {
+          "name": "Admin - Resolve Flag (Remove Product)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{token}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "url": {"raw": "{{baseUrl}}/api/market/admin/flags/1", "host": ["{{baseUrl}}"], "path": ["api","market","admin","flags","1"]},
+            "body": {"mode": "raw", "raw": "{\n  \"action\": \"remove\",\n  \"adminNotes\": \"Violates policy\"\n}"}
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Vehicles",
+      "item": [
+        {
+          "name": "List Available Vehicles",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/vehicles?status=available", "host": ["{{baseUrl}}"], "path": ["api","vehicles"], "query": [{"key": "status", "value": "available"}]}
+          },
+          "response": []
+        },
+        {
+          "name": "Rent Vehicle",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/vehicles/1/rent", "host": ["{{baseUrl}}"], "path": ["api","vehicles","1","rent"]}
+          },
+          "response": []
+        },
+        {
+          "name": "Return Vehicle",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/vehicles/1/return", "host": ["{{baseUrl}}"], "path": ["api","vehicles","1","return"]}
+          },
+          "response": []
+        },
+        {
+          "name": "My Active Rentals",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/vehicles/my/active", "host": ["{{baseUrl}}"], "path": ["api","vehicles","my","active"]}
+          },
+          "response": []
+        },
+        {
+          "name": "Admin - Vehicle Logs",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/vehicles/admin/logs", "host": ["{{baseUrl}}"], "path": ["api","vehicles","admin","logs"]}
+          },
+          "response": []
+        },
+        {
+          "name": "Admin - Export Logs CSV",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{token}}"}],
+            "url": {"raw": "{{baseUrl}}/api/vehicles/admin/logs.csv", "host": ["{{baseUrl}}"], "path": ["api","vehicles","admin","logs.csv"]}
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{"key": "token", "value": "{{token}}", "type": "string"}]
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://localhost:4000"},
+    {"key": "token", "value": ""}
+  ]
+}
