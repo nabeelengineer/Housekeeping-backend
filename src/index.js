@@ -3,6 +3,8 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const { sequelize } = require('./Models');
+const { Sequelize } = require('sequelize');
+const baseMigration = require('./migrations/20251013_000_base_schema');
 const authRoutes = require('./routes/auth');
 const deptRoutes = require('./routes/department');
 const catRoutes = require('./routes/categories');
@@ -38,6 +40,29 @@ app.use('/api/me', meRoutes);
   try {
     await sequelize.authenticate();
     console.log('DB connected');
+    // Ensure base schema exists using idempotent migration
+    try {
+      await baseMigration.up(sequelize.getQueryInterface(), Sequelize);
+      console.log('Base schema ensured via migration');
+    } catch (schemaErr) {
+      console.warn('Base schema migration failed or skipped:', schemaErr?.message || schemaErr);
+      // Attempt orphaned table repair then retry once
+      try {
+        const tables = [
+          'request_departments','request_categories','rental_odometer_reads','rental_logs',
+          'product_interests','product_flags','product_comments','product_images','products',
+          'notifications','assignments','assets','vehicles','requests','categories','employees','departments',
+          'audit_it_admin','audit_admin'
+        ];
+        for (const t of tables) {
+          await sequelize.query(`DROP TABLE IF EXISTS \`${t}\``);
+        }
+        await baseMigration.up(sequelize.getQueryInterface(), Sequelize);
+        console.log('Base schema repaired and ensured via migration');
+      } catch (repairErr) {
+        console.warn('Repair attempt failed:', repairErr?.message || repairErr);
+      }
+    }
     // Safe migration: extend employees.role enum with 'it_admin' if not present
     try {
       const [rows] = await sequelize.query("SHOW COLUMNS FROM `employees` LIKE 'role'");
@@ -226,180 +251,6 @@ app.use('/api/me', meRoutes);
       console.warn('Generated column/index migration skipped or failed:', genErr?.message || genErr);
     }
     // Removed vehicle default seeding; vehicles will be created manually by admin
-// Safe, one-off migration: add 'price' column to products if missing
-try {
-  const [cols] = await sequelize.query("SHOW COLUMNS FROM `products` LIKE 'price'");
-  if (!cols || cols.length === 0) {
-    await sequelize.query('ALTER TABLE `products` ADD COLUMN `price` DECIMAL(10,2) NULL AFTER `description`');
-    console.log("Added 'price' column to products");
-  }
-} catch (mErr) {
-  console.warn('Price column check/add failed or not applicable:', mErr?.message || mErr);
-}
-// Safe migration: add 'floor' and 'unit' to requests if missing
-try {
-  const [floorCol] = await sequelize.query("SHOW COLUMNS FROM `requests` LIKE 'floor'");
-  if (!floorCol || floorCol.length === 0) {
-    await sequelize.query("ALTER TABLE `requests` ADD COLUMN `floor` VARCHAR(50) NULL AFTER `description`");
-    console.log("Added 'floor' column to requests");
-  }
-  const [unitCol] = await sequelize.query("SHOW COLUMNS FROM `requests` LIKE 'unit'");
-  if (!unitCol || unitCol.length === 0) {
-    await sequelize.query("ALTER TABLE `requests` ADD COLUMN `unit` VARCHAR(50) NULL AFTER `floor`");
-    console.log("Added 'unit' column to requests");
-  }
-} catch (reqMigErr) {
-  console.warn('Request columns migration skipped or failed:', reqMigErr?.message || reqMigErr);
-}
-// Use plain sync to create new tables without altering existing ones to avoid excessive index churn
-await sequelize.sync();
-console.log('Models synced');
-// Safe migrations for vehicles: add new document fields and wheelers enum if missing
-try {
-  const [vehTbl] = await sequelize.query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vehicles'");
-  if (vehTbl && vehTbl.length > 0) {
-    // Add name column
-    const [nameCol] = await sequelize.query("SHOW COLUMNS FROM `vehicles` LIKE 'name'");
-    if (!nameCol || nameCol.length === 0) {
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `name` VARCHAR(255) NULL AFTER `id`");
-      console.log("Added vehicles.name column");
-    }
-    // Ensure type enum is correct (car,scooter,bike)
-    try {
-      const [typeCol] = await sequelize.query("SHOW COLUMNS FROM `vehicles` LIKE 'type'");
-      const typeStr = String(typeCol?.[0]?.Type || '');
-      if (typeStr && (!typeStr.includes("'scooter'") || !typeStr.includes("'car'") || !typeStr.includes("'bike'"))) {
-        await sequelize.query("ALTER TABLE `vehicles` MODIFY COLUMN `type` ENUM('car','scooter','bike') NOT NULL");
-        console.log("Normalized vehicles.type enum to ('car','scooter','bike')");
-      }
-    } catch (e) {
-      console.warn('Vehicles.type enum migration skipped or failed:', e?.message || e);
-    }
-    // Add wheelers enum column
-    const [wheelersCol] = await sequelize.query("SHOW COLUMNS FROM `vehicles` LIKE 'wheelers'");
-    if (!wheelersCol || wheelersCol.length === 0) {
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `wheelers` ENUM('2','4') NULL AFTER `type`");
-      console.log("Added vehicles.wheelers column");
-    }
-    // Add chassis_no
-    const [chassisCol] = await sequelize.query("SHOW COLUMNS FROM `vehicles` LIKE 'chassis_no'");
-    if (!chassisCol || chassisCol.length === 0) {
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `chassis_no` VARCHAR(255) NULL AFTER `image_url`");
-      console.log("Added vehicles.chassis_no column");
-    }
-    // Insurance fields
-    const [insImgCol] = await sequelize.query("SHOW COLUMNS FROM `vehicles` LIKE 'insurance_image_url'");
-    if (!insImgCol || insImgCol.length === 0) {
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `insurance_image_url` VARCHAR(512) NULL AFTER `chassis_no`");
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `insurance_valid_from` DATE NULL AFTER `insurance_image_url`");
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `insurance_valid_to` DATE NULL AFTER `insurance_valid_from`");
-      console.log("Added vehicles.insurance_* columns");
-    }
-    // RC fields
-    const [rcImgCol] = await sequelize.query("SHOW COLUMNS FROM `vehicles` LIKE 'rc_image_url'");
-    if (!rcImgCol || rcImgCol.length === 0) {
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `rc_image_url` VARCHAR(512) NULL AFTER `insurance_valid_to`");
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `rc_valid_from` DATE NULL AFTER `rc_image_url`");
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `rc_valid_to` DATE NULL AFTER `rc_valid_from`");
-      console.log("Added vehicles.rc_* columns");
-    }
-    // Pollution fields
-    const [polImgCol] = await sequelize.query("SHOW COLUMNS FROM `vehicles` LIKE 'pollution_image_url'");
-    if (!polImgCol || polImgCol.length === 0) {
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `pollution_image_url` VARCHAR(512) NULL AFTER `rc_valid_to`");
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `pollution_valid_from` DATE NULL AFTER `pollution_image_url`");
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `pollution_valid_to` DATE NULL AFTER `pollution_valid_from`");
-      console.log("Added vehicles.pollution_* columns");
-    }
-    // Paper image
-    const [paperImgCol] = await sequelize.query("SHOW COLUMNS FROM `vehicles` LIKE 'paper_image_url'");
-    if (!paperImgCol || paperImgCol.length === 0) {
-      await sequelize.query("ALTER TABLE `vehicles` ADD COLUMN `paper_image_url` VARCHAR(512) NULL AFTER `pollution_valid_to`");
-      console.log("Added vehicles.paper_image_url column");
-    }
-  }
-} catch (vehMigErr) {
-  console.warn('Vehicles table migration skipped or failed:', vehMigErr?.message || vehMigErr);
-}
-// Safe migration: ensure assets.status enum includes 'assigned' and add typeDetail column if missing
-try {
-  const [assetsTbl] = await sequelize.query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'assets'");
-  if (assetsTbl && assetsTbl.length > 0) {
-    // Extend status enum
-    const [statusCol] = await sequelize.query("SHOW COLUMNS FROM `assets` LIKE 'status'");
-    const typeStr = String(statusCol?.[0]?.Type || '');
-    if (typeStr && !typeStr.includes("'assigned'")) {
-      await sequelize.query("ALTER TABLE `assets` MODIFY COLUMN `status` ENUM('active','assigned','repair','retired') NOT NULL DEFAULT 'active'");
-      console.log("Extended assets.status enum with 'assigned'");
-    }
-    // Add typeDetail column if missing
-    const [typeDetailCol] = await sequelize.query("SHOW COLUMNS FROM `assets` LIKE 'typeDetail'");
-    if (!typeDetailCol || typeDetailCol.length === 0) {
-      await sequelize.query("ALTER TABLE `assets` ADD COLUMN `typeDetail` VARCHAR(64) NULL AFTER `assetType`");
-      console.log("Added assets.typeDetail column");
-    }
-    // Ensure unique index on assetId
-    const [idxRows] = await sequelize.query("SHOW INDEX FROM `assets` WHERE Key_name = 'ux_assets_assetId'");
-    if (!idxRows || idxRows.length === 0) {
-      await sequelize.query("CREATE UNIQUE INDEX `ux_assets_assetId` ON `assets` (`assetId`)");
-      console.log('Created unique index ux_assets_assetId');
-    }
-  }
-} catch (assetMigErr) {
-  console.warn('Assets table migration skipped or failed:', assetMigErr?.message || assetMigErr);
-}
-// Safe migration: ensure assignments has retired fields and status enum includes 'retired'
-try {
-  const [assTbl] = await sequelize.query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'assignments'");
-  if (assTbl && assTbl.length > 0) {
-    // Extend status enum with 'retired'
-    try {
-      const [statusCol] = await sequelize.query("SHOW COLUMNS FROM `assignments` LIKE 'status'");
-      const typeStr = String(statusCol?.[0]?.Type || '');
-      if (typeStr && !typeStr.includes("'retired'")) {
-        await sequelize.query("ALTER TABLE `assignments` MODIFY COLUMN `status` ENUM('active','returned','retired') NOT NULL DEFAULT 'active'");
-        console.log("Extended assignments.status enum with 'retired'");
-      }
-    } catch (e) {
-      console.warn('Assignments.status enum migration skipped or failed:', e?.message || e);
-    }
-    // Add retired boolean
-    const [retiredCol] = await sequelize.query("SHOW COLUMNS FROM `assignments` LIKE 'retired'");
-    if (!retiredCol || retiredCol.length === 0) {
-      await sequelize.query("ALTER TABLE `assignments` ADD COLUMN `retired` TINYINT(1) NOT NULL DEFAULT 0 AFTER `conditionOnReturn`");
-      console.log("Added assignments.retired column");
-    }
-    // Add retireReason
-    const [retireReasonCol] = await sequelize.query("SHOW COLUMNS FROM `assignments` LIKE 'retireReason'");
-    if (!retireReasonCol || retireReasonCol.length === 0) {
-      await sequelize.query("ALTER TABLE `assignments` ADD COLUMN `retireReason` VARCHAR(255) NULL AFTER `retired`");
-      console.log("Added assignments.retireReason column");
-    }
-    // Add retiredBy
-    const [retiredByCol] = await sequelize.query("SHOW COLUMNS FROM `assignments` LIKE 'retiredBy'");
-    if (!retiredByCol || retiredByCol.length === 0) {
-      await sequelize.query("ALTER TABLE `assignments` ADD COLUMN `retiredBy` VARCHAR(64) NULL AFTER `retireReason`");
-      console.log("Added assignments.retiredBy column");
-    }
-  }
-} catch (assignMigErr) {
-  console.warn('Assignments table migration skipped or failed:', assignMigErr?.message || assignMigErr);
-}
-// Add generated column + unique index for one-active-assignment rule, after table exists
-try {
-  const [tbl] = await sequelize.query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'assignments'");
-  if (tbl && tbl.length > 0) {
-    const [col] = await sequelize.query("SHOW COLUMNS FROM `assignments` LIKE 'active_only'");
-    if (!col || col.length === 0) {
-      await sequelize.query("ALTER TABLE `assignments` ADD COLUMN `active_only` CHAR(36) GENERATED ALWAYS AS (CASE WHEN status='active' THEN assetId ELSE NULL END) STORED");
-      await sequelize.query("CREATE UNIQUE INDEX `ux_assign_one_active` ON `assignments` (`active_only`)");
-      console.log('Added generated column and unique index for assignments.active_only');
-    }
-  }
-} catch (genErr) {
-  console.warn('Generated column/index migration skipped or failed:', genErr?.message || genErr);
-}
-// Removed vehicle default seeding; vehicles will be created manually by admin
 
 // =========================
 // Vehicle document expiry notifications

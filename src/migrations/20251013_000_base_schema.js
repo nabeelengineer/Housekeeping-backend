@@ -8,10 +8,23 @@ module.exports = {
   async up(queryInterface, Sequelize) {
     const ensureTable = async (name, definition, indexes = []) => {
       let exists = false;
-      try { await queryInterface.describeTable(name); exists = true; } catch (_) { exists = false; }
-      if (!exists) { await queryInterface.createTable(name, definition); }
-      // Apply named indexes safely
-      const existing = await queryInterface.showIndex(name).catch(() => []);
+      try {
+        await queryInterface.describeTable(name);
+        exists = true;
+      } catch (e) {
+        // If table is orphaned in metadata (errno 1932), drop it to allow clean create
+        const errno = e && (e.errno || e.parent?.errno);
+        if (errno === 1932) {
+          try { await queryInterface.sequelize.query(`DROP TABLE IF EXISTS \`${name}\``); } catch (_) {}
+        }
+        exists = false;
+      }
+      if (!exists) {
+        await queryInterface.createTable(name, definition);
+      }
+      // Apply named indexes safely (skip if table somehow still not available)
+      let existing = [];
+      try { existing = await queryInterface.showIndex(name); } catch (_) { existing = []; }
       const names = new Set((existing || []).map(i => i.name).filter(Boolean));
       for (const idx of indexes) {
         const idxName = idx.name;
