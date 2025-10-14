@@ -24,6 +24,7 @@ const Notification = require('./notification')(sequelize, DataTypes);
 // Vehicle Rental models
 const Vehicle = require('./vehicle')(sequelize, DataTypes);
 const RentalLog = require('./rentalLog')(sequelize, DataTypes);
+const RentalOdometerRead = require('./rentalOdometerRead')(sequelize, DataTypes);
 
 // Employee ↔ Department (One-to-Many)
 Department.hasMany(Employee, { foreignKey: 'department_id' });
@@ -83,6 +84,12 @@ Notification.belongsTo(Employee, { foreignKey: 'recipient_id', as: 'recipient' }
 Vehicle.hasMany(RentalLog, { foreignKey: 'vehicle_id', as: 'logs', onDelete: 'CASCADE' });
 RentalLog.belongsTo(Vehicle, { foreignKey: 'vehicle_id', as: 'vehicle' });
 
+// Odometer: 1:1 with a rental log; also link to vehicle for reporting
+RentalLog.hasOne(RentalOdometerRead, { foreignKey: 'rental_id', as: 'odometer', onDelete: 'CASCADE' });
+RentalOdometerRead.belongsTo(RentalLog, { foreignKey: 'rental_id', as: 'rental' });
+Vehicle.hasMany(RentalOdometerRead, { foreignKey: 'vehicle_id', as: 'odometerReads', onDelete: 'CASCADE' });
+RentalOdometerRead.belongsTo(Vehicle, { foreignKey: 'vehicle_id', as: 'vehicleRef' });
+
 Employee.hasMany(RentalLog, { foreignKey: 'renter_id', as: 'rentalLogs' });
 RentalLog.belongsTo(Employee, { foreignKey: 'renter_id', as: 'renter' });
 
@@ -113,6 +120,7 @@ module.exports = {
   // Vehicle rental exports
   Vehicle,
   RentalLog,
+  RentalOdometerRead,
   // IT assets exports
   Asset,
   Assignment,

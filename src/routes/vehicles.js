@@ -1,11 +1,38 @@
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const { Parser } = require('json2csv');
 const auth = require('../middleware/auth');
 const sequelize = require('../config/db');
 const { Op } = require('sequelize');
-const { Vehicle, RentalLog, Employee } = require('../Models');
+const { Vehicle, RentalLog, Employee, RentalOdometerRead } = require('../Models');
 
 const router = express.Router();
+
+// Ensure upload dir exists
+const uploadDir = path.join(process.cwd(), 'uploads', 'vehicles');
+fs.mkdirSync(uploadDir, { recursive: true });
+
+// Configure multer for vehicle docs
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname);
+    const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, '');
+    cb(null, `${Date.now()}_${base}${ext}`);
+  },
+});
+
+function fileFilter(req, file, cb) {
+  const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+  if (!allowed.includes(file.mimetype)) return cb(new Error('Invalid file type'), false);
+  cb(null, true);
+}
+
+const upload = multer({ storage, fileFilter, limits: { fileSize: 5 * 1024 * 1024 } });
 
 // Employee: my active rentals with vehicle details
 router.get('/my/active', auth, async (req, res) => {
@@ -21,27 +48,97 @@ router.get('/my/active', auth, async (req, res) => {
   }
 });
 
-// Admin: seed default vehicles (idempotent)
-router.post('/admin/seed-defaults', auth, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'only admin' });
-  const defaults = [
-    { type: 'scooter', plate: 'SC-001' },
-    { type: 'scooter', plate: 'SC-002' },
-    { type: 'car', plate: 'CR-001' },
-    { type: 'bike', plate: 'BK-001' },
-    { type: 'bike', plate: 'BK-002' },
-    { type: 'bike', plate: 'BK-003' },
-  ];
+// =========================
+// Odometer: Start reading (employee)
+// =========================
+router.post('/rentals/:rentalId/odometer/start', auth, upload.single('start_meter_image'), async (req, res) => {
   try {
-    const created = [];
-    for (const d of defaults) {
-      const [v, wasCreated] = await Vehicle.findOrCreate({
-        where: { plate: d.plate },
-        defaults: { ...d, status: 'available' },
-      });
-      created.push({ plate: v.plate, created: wasCreated });
+    const rentalId = Number(req.params.rentalId);
+    const rental = await RentalLog.findByPk(rentalId);
+    if (!rental) return res.status(404).json({ error: 'rental not found' });
+    if (String(rental.renter_id) !== String(req.user.employee_id) && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'not allowed' });
     }
-    res.json({ ok: true, items: created });
+    const exists = await RentalOdometerRead.findOne({ where: { rental_id: rentalId } });
+    if (exists) return res.status(409).json({ error: 'odometer already captured' });
+
+    const { start_km } = req.body || {};
+    if (start_km == null || isNaN(Number(start_km))) return res.status(400).json({ error: 'start_km required' });
+    const img = req.file;
+    if (!img) return res.status(400).json({ error: 'start meter image required' });
+    const row = await RentalOdometerRead.create({
+      rental_id: rentalId,
+      vehicle_id: rental.vehicle_id,
+      start_km: Number(start_km),
+      start_image_url: `/uploads/vehicles/${path.basename(img.path)}`,
+      start_captured_at: new Date(),
+      start_captured_by: String(req.user.employee_id),
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    res.status(201).json(row);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// =========================
+// Odometer: End reading (employee)
+// =========================
+router.patch('/rentals/:rentalId/odometer/end', auth, upload.single('end_meter_image'), async (req, res) => {
+  try {
+    const rentalId = Number(req.params.rentalId);
+    const rental = await RentalLog.findByPk(rentalId);
+    if (!rental) return res.status(404).json({ error: 'rental not found' });
+    if (String(rental.renter_id) !== String(req.user.employee_id) && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'not allowed' });
+    }
+    const row = await RentalOdometerRead.findOne({ where: { rental_id: rentalId } });
+    if (!row) return res.status(404).json({ error: 'start odometer missing' });
+
+    const { end_km } = req.body || {};
+    if (end_km == null || isNaN(Number(end_km))) return res.status(400).json({ error: 'end_km required' });
+    const img = req.file;
+    if (!img) return res.status(400).json({ error: 'end meter image required' });
+    if (Number(end_km) < Number(row.start_km)) return res.status(400).json({ error: 'end_km must be >= start_km' });
+    row.end_km = Number(end_km);
+    row.end_image_url = `/uploads/vehicles/${path.basename(img.path)}`;
+    row.end_captured_at = new Date();
+    row.end_captured_by = String(req.user.employee_id);
+    row.updated_at = new Date();
+    await row.save();
+    res.json(row);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// =========================
+// Admin: Monthly distance per vehicle
+// =========================
+router.get('/admin/monthly-distance', auth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'only admin' });
+  try {
+    const month = String(req.query.month || '').trim(); // YYYY-MM
+    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month format YYYY-MM required' });
+    const [year, mm] = month.split('-').map((n) => Number(n));
+    const from = new Date(year, mm - 1, 1, 0, 0, 0, 0);
+    const to = new Date(year, mm, 1, 0, 0, 0, 0); // exclusive
+
+    const logs = await RentalLog.findAll({
+      where: { returned_at: { [Op.gte]: from, [Op.lt]: to } },
+      include: [{ model: RentalOdometerRead, as: 'odometer' }],
+    });
+    const map = new Map();
+    for (const l of logs) {
+      const o = l.odometer;
+      if (!o || o.end_km == null) continue;
+      const dist = Number(o.end_km) - Number(o.start_km || 0);
+      if (!map.has(l.vehicle_id)) map.set(l.vehicle_id, 0);
+      map.set(l.vehicle_id, map.get(l.vehicle_id) + (isNaN(dist) ? 0 : dist));
+    }
+    const result = Array.from(map.entries()).map(([vehicle_id, distance_km]) => ({ vehicle_id, distance_km }));
+    res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -63,6 +160,135 @@ router.get('/', auth, async (req, res) => {
     if (req.query.type) where.type = req.query.type;
     const list = await Vehicle.findAll({ where, order: [['type', 'ASC'], ['id', 'ASC']] });
     res.json(list);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// =========================
+// Admin: Create/Update/Delete Vehicles
+// =========================
+
+// Create vehicle with document images and validity dates
+router.post('/admin/vehicles', auth, upload.fields([
+  { name: 'vehicle_image', maxCount: 1 },
+  { name: 'insurance_image', maxCount: 1 },
+  { name: 'rc_image', maxCount: 1 },
+  { name: 'pollution_image', maxCount: 1 },
+  { name: 'paper_image', maxCount: 1 },
+]), async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'only admin' });
+    const {
+      name,
+      type, // car | scooter | bike
+      wheelers, // '2' | '4'
+      plate,
+      chassis_no,
+      insurance_valid_from,
+      insurance_valid_to,
+      rc_valid_from,
+      rc_valid_to,
+      pollution_valid_from,
+      pollution_valid_to,
+    } = req.body || {};
+
+    if (!type || !plate) return res.status(400).json({ error: 'type and plate are required' });
+
+    const files = req.files || {};
+    const vehicle_image = files['vehicle_image']?.[0];
+    const insurance_image = files['insurance_image']?.[0];
+    const rc_image = files['rc_image']?.[0];
+    const pollution_image = files['pollution_image']?.[0];
+    const paper_image = files['paper_image']?.[0];
+
+    const payload = {
+      name: name || null,
+      type: String(type),
+      wheelers: wheelers ? String(wheelers) : null,
+      plate: String(plate).trim(),
+      image_url: vehicle_image ? `/uploads/vehicles/${path.basename(vehicle_image.path)}` : null,
+      chassis_no: chassis_no ? String(chassis_no).trim() : null,
+      insurance_image_url: insurance_image ? `/uploads/vehicles/${path.basename(insurance_image.path)}` : null,
+      insurance_valid_from: insurance_valid_from || null,
+      insurance_valid_to: insurance_valid_to || null,
+      rc_image_url: rc_image ? `/uploads/vehicles/${path.basename(rc_image.path)}` : null,
+      rc_valid_from: rc_valid_from || null,
+      rc_valid_to: rc_valid_to || null,
+      pollution_image_url: pollution_image ? `/uploads/vehicles/${path.basename(pollution_image.path)}` : null,
+      pollution_valid_from: pollution_valid_from || null,
+      pollution_valid_to: pollution_valid_to || null,
+      paper_image_url: paper_image ? `/uploads/vehicles/${path.basename(paper_image.path)}` : null,
+      status: 'available',
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    const existing = await Vehicle.findOne({ where: { plate: payload.plate } });
+    if (existing) return res.status(409).json({ error: 'vehicle with same plate exists' });
+
+    const v = await Vehicle.create(payload);
+    res.status(201).json(v);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Update vehicle (replace images/dates/fields)
+router.patch('/admin/vehicles/:id', auth, upload.fields([
+  { name: 'vehicle_image', maxCount: 1 },
+  { name: 'insurance_image', maxCount: 1 },
+  { name: 'rc_image', maxCount: 1 },
+  { name: 'pollution_image', maxCount: 1 },
+  { name: 'paper_image', maxCount: 1 },
+]), async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'only admin' });
+    const v = await Vehicle.findByPk(req.params.id);
+    if (!v) return res.status(404).json({ error: 'not found' });
+
+    const body = req.body || {};
+    if (body.name !== undefined) v.name = String(body.name).trim() || null;
+    if (body.type !== undefined) v.type = String(body.type);
+    if (body.wheelers !== undefined) v.wheelers = String(body.wheelers);
+    if (body.plate !== undefined) v.plate = String(body.plate).trim();
+    if (body.chassis_no !== undefined) v.chassis_no = String(body.chassis_no).trim() || null;
+    if (body.insurance_valid_from !== undefined) v.insurance_valid_from = body.insurance_valid_from || null;
+    if (body.insurance_valid_to !== undefined) v.insurance_valid_to = body.insurance_valid_to || null;
+    if (body.rc_valid_from !== undefined) v.rc_valid_from = body.rc_valid_from || null;
+    if (body.rc_valid_to !== undefined) v.rc_valid_to = body.rc_valid_to || null;
+    if (body.pollution_valid_from !== undefined) v.pollution_valid_from = body.pollution_valid_from || null;
+    if (body.pollution_valid_to !== undefined) v.pollution_valid_to = body.pollution_valid_to || null;
+
+    const files = req.files || {};
+    const vehicle_image = files['vehicle_image']?.[0];
+    const insurance_image = files['insurance_image']?.[0];
+    const rc_image = files['rc_image']?.[0];
+    const pollution_image = files['pollution_image']?.[0];
+    const paper_image = files['paper_image']?.[0];
+    if (vehicle_image) v.image_url = `/uploads/vehicles/${path.basename(vehicle_image.path)}`;
+    if (insurance_image) v.insurance_image_url = `/uploads/vehicles/${path.basename(insurance_image.path)}`;
+    if (rc_image) v.rc_image_url = `/uploads/vehicles/${path.basename(rc_image.path)}`;
+    if (pollution_image) v.pollution_image_url = `/uploads/vehicles/${path.basename(pollution_image.path)}`;
+    if (paper_image) v.paper_image_url = `/uploads/vehicles/${path.basename(paper_image.path)}`;
+
+    v.updated_at = new Date();
+    await v.save();
+    res.json(v);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete vehicle (reject if currently rented)
+router.delete('/admin/vehicles/:id', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'only admin' });
+    const v = await Vehicle.findByPk(req.params.id);
+    if (!v) return res.status(404).json({ error: 'not found' });
+    if (v.status === 'rented') return res.status(400).json({ error: 'cannot delete a rented vehicle' });
+    await v.destroy();
+    res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -110,6 +336,11 @@ router.post('/:id/return', auth, async (req, res) => {
     });
     if (!log) throw new Error('No active rental for this user');
 
+    // Business rule: do not allow return unless end_km + end_image exist
+    const odo = await RentalOdometerRead.findOne({ where: { rental_id: log.id }, transaction: t, lock: t.LOCK.UPDATE });
+    if (!odo || odo.end_km == null || !odo.end_image_url) {
+      throw new Error('Cannot return without end km and end meter image');
+    }
     log.returned_at = new Date();
     await log.save({ transaction: t });
 
@@ -140,6 +371,12 @@ router.post('/admin/:id/return', auth, async (req, res) => {
       lock: t.LOCK.UPDATE,
     });
     if (!log) throw new Error('No active rental');
+
+    // Require end odometer reading before admin closes
+    const odo = await RentalOdometerRead.findOne({ where: { rental_id: log.id }, transaction: t, lock: t.LOCK.UPDATE });
+    if (!odo || odo.end_km == null || !odo.end_image_url) {
+      throw new Error('End odometer reading (km + image) required before closing');
+    }
 
     log.returned_at = new Date();
     await log.save({ transaction: t });
@@ -176,6 +413,7 @@ router.get('/admin/logs', auth, async (req, res) => {
       include: [
         { model: Vehicle, as: 'vehicle' },
         { model: Employee, as: 'renter', attributes: ['employee_id', 'name'] },
+        { model: RentalOdometerRead, as: 'odometer' },
       ],
     });
     res.json(logs);
