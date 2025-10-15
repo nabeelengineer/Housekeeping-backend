@@ -1,7 +1,7 @@
 FROM node:18-alpine
 
 WORKDIR /app
-
+RUN apk add --no-cache python3 make g++ # for bcrypt/native deps
 COPY package*.json ./
 RUN npm ci --omit=dev || npm install --omit=dev
 
