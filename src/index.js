@@ -20,8 +20,32 @@ const meRoutes = require('./routes/me');
 const app = express();
 const PORT = process.env.PORT || 4000;
 app.use(bodyParser.json());
-app.use(cors({ origin: 'http://localhost:5173' }));
+// CORS allowlist: built-in defaults + merge with env (comma-separated)
+const defaultCors = [
+  'http://3.91.212.140',
+  'http://localhost:5173',
+];
+const envCors = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const allowedOrigins = Array.from(new Set([...defaultCors, ...envCors]));
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+    allowedHeaders: ['Authorization', 'Content-Type'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  })
+);
 app.use('/uploads', express.static('uploads'));
+
+// Simple health check
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/departments', deptRoutes);
@@ -49,10 +73,10 @@ app.use('/api/me', meRoutes);
       // Attempt orphaned table repair then retry once
       try {
         const tables = [
-          'request_departments','request_categories','rental_odometer_reads','rental_logs',
-          'product_interests','product_flags','product_comments','product_images','products',
-          'notifications','assignments','assets','vehicles','requests','categories','employees','departments',
-          'audit_it_admin','audit_admin'
+          'request_departments', 'request_categories', 'rental_odometer_reads', 'rental_logs',
+          'product_interests', 'product_flags', 'product_comments', 'product_images', 'products',
+          'notifications', 'assignments', 'assets', 'vehicles', 'requests', 'categories', 'employees', 'departments',
+          'audit_it_admin', 'audit_admin'
         ];
         for (const t of tables) {
           await sequelize.query(`DROP TABLE IF EXISTS \`${t}\``);
@@ -252,72 +276,72 @@ app.use('/api/me', meRoutes);
     }
     // Removed vehicle default seeding; vehicles will be created manually by admin
 
-// =========================
-// Vehicle document expiry notifications
-// =========================
-async function checkVehicleDocumentsAndNotify() {
-  try {
-    const { Vehicle, Notification, Employee } = sequelize.models;
-    if (!Vehicle || !Notification || !Employee) return;
-    const admins = await Employee.findAll({ where: { role: 'admin' }, attributes: ['employee_id', 'name'] });
-    if (!admins || admins.length === 0) return;
+    // =========================
+    // Vehicle document expiry notifications
+    // =========================
+    async function checkVehicleDocumentsAndNotify() {
+      try {
+        const { Vehicle, Notification, Employee } = sequelize.models;
+        if (!Vehicle || !Notification || !Employee) return;
+        const admins = await Employee.findAll({ where: { role: 'admin' }, attributes: ['employee_id', 'name'] });
+        if (!admins || admins.length === 0) return;
 
-    const vehicles = await Vehicle.findAll();
-    const today = new Date();
-    const thresholds = [15, 10, 5, 2, 1];
-    const docs = [
-      { key: 'insurance', toField: 'insurance_valid_to' },
-      { key: 'rc', toField: 'rc_valid_to' },
-      { key: 'pollution', toField: 'pollution_valid_to' },
-    ];
+        const vehicles = await Vehicle.findAll();
+        const today = new Date();
+        const thresholds = [15, 10, 5, 2, 1];
+        const docs = [
+          { key: 'insurance', toField: 'insurance_valid_to' },
+          { key: 'rc', toField: 'rc_valid_to' },
+          { key: 'pollution', toField: 'pollution_valid_to' },
+        ];
 
-    for (const v of vehicles) {
-      for (const d of docs) {
-        const to = v.get(d.toField);
-        if (!to) continue;
-        const expiry = new Date(to);
-        // Strip time for day-level compare
-        const msPerDay = 24 * 60 * 60 * 1000;
-        const diffDays = Math.ceil((expiry.setHours(0,0,0,0) - new Date(today.setHours(0,0,0,0))) / msPerDay);
+        for (const v of vehicles) {
+          for (const d of docs) {
+            const to = v.get(d.toField);
+            if (!to) continue;
+            const expiry = new Date(to);
+            // Strip time for day-level compare
+            const msPerDay = 24 * 60 * 60 * 1000;
+            const diffDays = Math.ceil((expiry.setHours(0, 0, 0, 0) - new Date(today.setHours(0, 0, 0, 0))) / msPerDay);
 
-        const notifyAdmins = async (label, options = { dedupe: true }) => {
-          const message = `Vehicle ${v.plate} ${d.key.toUpperCase()} ${label}`;
-          for (const a of admins) {
-            if (options.dedupe) {
-              const existing = await Notification.findOne({ where: { recipient_id: a.employee_id, type: 'vehicle_doc_reminder', message } });
-              if (existing) continue;
+            const notifyAdmins = async (label, options = { dedupe: true }) => {
+              const message = `Vehicle ${v.plate} ${d.key.toUpperCase()} ${label}`;
+              for (const a of admins) {
+                if (options.dedupe) {
+                  const existing = await Notification.findOne({ where: { recipient_id: a.employee_id, type: 'vehicle_doc_reminder', message } });
+                  if (existing) continue;
+                }
+                await Notification.create({
+                  recipient_id: a.employee_id,
+                  type: 'vehicle_doc_reminder',
+                  message,
+                  meta: { vehicle_id: v.id, plate: v.plate, doc: d.key, valid_to: v.get(d.toField) },
+                  created_at: new Date(),
+                });
+              }
+            };
+
+            if (diffDays < 0) {
+              // expired: send daily until updated (include date so message differs daily)
+              const todayStr = new Date().toISOString().slice(0, 10);
+              await notifyAdmins(`document EXPIRED on ${todayStr}`, { dedupe: false });
+            } else if (thresholds.includes(diffDays)) {
+              // pre-expiry reminders should be sent once per threshold, so dedupe
+              await notifyAdmins(`expires in ${diffDays} day(s)`, { dedupe: true });
             }
-            await Notification.create({
-              recipient_id: a.employee_id,
-              type: 'vehicle_doc_reminder',
-              message,
-              meta: { vehicle_id: v.id, plate: v.plate, doc: d.key, valid_to: v.get(d.toField) },
-              created_at: new Date(),
-            });
           }
-        };
-
-        if (diffDays < 0) {
-          // expired: send daily until updated (include date so message differs daily)
-          const todayStr = new Date().toISOString().slice(0,10);
-          await notifyAdmins(`document EXPIRED on ${todayStr}`, { dedupe: false });
-        } else if (thresholds.includes(diffDays)) {
-          // pre-expiry reminders should be sent once per threshold, so dedupe
-          await notifyAdmins(`expires in ${diffDays} day(s)`, { dedupe: true });
         }
+      } catch (e) {
+        console.warn('Vehicle expiry check failed:', e?.message || e);
       }
     }
-  } catch (e) {
-    console.warn('Vehicle expiry check failed:', e?.message || e);
+
+    // Run once on startup and then daily
+    await checkVehicleDocumentsAndNotify();
+    setInterval(checkVehicleDocumentsAndNotify, 24 * 60 * 60 * 1000);
+
+    app.listen(PORT, '0.0.0.0', () => console.log(`Server running on ${PORT}`));
+  } catch (err) {
+    console.error('Failed to start', err);
   }
-}
-
-// Run once on startup and then daily
-await checkVehicleDocumentsAndNotify();
-setInterval(checkVehicleDocumentsAndNotify, 24 * 60 * 60 * 1000);
-
-app.listen(PORT, () => console.log(`Server running on ${PORT}`));
-} catch (err) {
-  console.error('Failed to start', err);
-}
 })();
