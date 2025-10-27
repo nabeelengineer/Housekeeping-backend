@@ -44,11 +44,13 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Simple CORS configuration for development
+// CORS configuration
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps, curl, etc.)
-    if (!origin) return callback(null, true);
+    if (!origin && process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
     
     // Check if the origin is in the allowed list or is a localhost URL
     const allowedOrigins = [
@@ -63,13 +65,14 @@ const corsOptions = {
     const envOrigins = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
     const allAllowedOrigins = [...new Set([...allowedOrigins, ...envOrigins])];
     
-    if (allAllowedOrigins.includes(origin) || 
-        allAllowedOrigins.some(allowed => origin.startsWith(allowed))) {
+    if (process.env.NODE_ENV === 'development' || !origin) {
       return callback(null, true);
     }
     
-    // For development, you might want to allow all origins
-    if (process.env.NODE_ENV !== 'production') {
+    if (allAllowedOrigins.some(allowed => 
+      origin === allowed || 
+      origin.startsWith(allowed.replace(/\*$/, ''))
+    )) {
       return callback(null, true);
     }
     
@@ -83,10 +86,30 @@ const corsOptions = {
 };
 
 // Apply CORS middleware
-app.use(cors(corsOptions));
-
-// Handle preflight requests
-app.options('*', cors(corsOptions));
+app.use((req, res, next) => {
+  // Set CORS headers for all responses
+  const origin = req.headers.origin;
+  
+  // Check if origin is allowed
+  if (process.env.NODE_ENV === 'development' || 
+      !origin || 
+      corsOptions.origin(origin, () => {}) === true) {
+    
+    // Set CORS headers
+    res.header('Access-Control-Allow-Origin', origin || '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Max-Age', '86400');
+    
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+  }
+  
+  next();
+});
 
 // Body parsing with increased limit for file uploads
 app.use(bodyParser.json({ limit: '10mb' }));
