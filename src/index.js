@@ -23,7 +23,6 @@ const meRoutes = require('./routes/me');
 const app = express();
 const PORT = process.env.PORT || 4000;
 app.use(bodyParser.json());
-// CORS allowlist: built-in defaults + merge with env (comma-separated)
 // Security middleware
 app.use(helmet());
 app.use(helmet.hsts({
@@ -39,38 +38,55 @@ app.use(morgan('combined'));
 // Rate limiting
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 1000, // Increased limit for development
   message: 'Too many requests, please try again later',
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// CORS configuration
-const allowedOrigins = [
-  'http://3.91.212.140',
-  'http://localhost:5173',
-  ...(process.env.CORS_ORIGIN || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean)
-];
-
+// Simple CORS configuration for development
 const corsOptions = {
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    
+    // Check if the origin is in the allowed list or is a localhost URL
+    const allowedOrigins = [
+      'http://3.91.212.140',
+      'http://localhost:5173',
+      'http://localhost:3000',
+      'http://127.0.0.1:5173',
+      'http://127.0.0.1:3000'
+    ];
+    
+    // Add any additional origins from environment variable
+    const envOrigins = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
+    const allAllowedOrigins = [...new Set([...allowedOrigins, ...envOrigins])];
+    
+    if (allAllowedOrigins.includes(origin) || 
+        allAllowedOrigins.some(allowed => origin.startsWith(allowed))) {
+      return callback(null, true);
     }
+    
+    // For development, you might want to allow all origins
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  optionsSuccessStatus: 200, // Some legacy browsers (IE11, various SmartTVs) choke on 204
   maxAge: 86400 // 24 hours
 };
 
+// Apply CORS middleware
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // Enable preflight for all routes
+
+// Handle preflight requests
+app.options('*', cors(corsOptions));
 
 // Body parsing with increased limit for file uploads
 app.use(bodyParser.json({ limit: '10mb' }));
