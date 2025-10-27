@@ -2,6 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
 const { sequelize } = require('./Models');
 const { Sequelize } = require('sequelize');
 const baseMigration = require('./migrations/20251013_000_base_schema');
@@ -21,31 +24,94 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 app.use(bodyParser.json());
 // CORS allowlist: built-in defaults + merge with env (comma-separated)
-const defaultCors = [
+// Security middleware
+app.use(helmet());
+app.use(helmet.hsts({
+  maxAge: 31536000, // 1 year
+  includeSubDomains: true,
+  preload: true
+}));
+app.use(helmet.referrerPolicy({ policy: 'same-origin' }));
+
+// Request logging
+app.use(morgan('combined'));
+
+// Rate limiting
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests, please try again later',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// CORS configuration
+const allowedOrigins = [
   'http://3.91.212.140',
   'http://localhost:5173',
+  ...(process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
 ];
-const envCors = (process.env.CORS_ORIGIN || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
-const allowedOrigins = Array.from(new Set([...defaultCors, ...envCors]));
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-    allowedHeaders: ['Authorization', 'Content-Type'],
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  })
-);
-app.use('/uploads', express.static('uploads'));
 
-// Simple health check
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  maxAge: 86400 // 24 hours
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // Enable preflight for all routes
+
+// Body parsing with increased limit for file uploads
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+
+// Static files
+app.use('/uploads', express.static('uploads', {
+  maxAge: '1y',
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, path) => {
+    if (path.endsWith('.pdf')) {
+      res.set('Content-Disposition', 'inline');
+    }
+  }
+}));
+
+// Health check endpoint
+app.get('/health', async (req, res) => {
+  const healthcheck = {
+    uptime: process.uptime(),
+    message: 'OK',
+    timestamp: Date.now(),
+    database: 'unknown',
+    status: 'ok'
+  };
+
+  try {
+    // Check database connection
+    await sequelize.authenticate();
+    healthcheck.database = 'connected';
+    res.json(healthcheck);
+  } catch (err) {
+    healthcheck.database = 'disconnected';
+    healthcheck.error = err.message;
+    res.status(503).json(healthcheck);
+  }
+});
+
+// Apply rate limiting to all API routes
+app.use('/api/', apiLimiter);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/departments', deptRoutes);
@@ -58,6 +124,128 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/assets', assetsRoutes);
 app.use('/api/assignments', assignmentsRoutes);
 app.use('/api/me', meRoutes);
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ 
+    error: 'Not Found',
+    message: 'The requested resource was not found',
+    path: req.path
+  });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  
+  // Handle JWT errors
+  if (err.name === 'JsonWebTokenError') {
+    return res.status(401).json({ 
+      error: 'Invalid Token',
+      message: 'The provided token is invalid'
+    });
+  }
+
+  if (err.name === 'TokenExpiredError') {
+    return res.status(401).json({ 
+      error: 'Token Expired',
+      message: 'Your session has expired. Please log in again.'
+    });
+  }
+
+  // Handle Sequelize validation errors
+  if (err.name === 'SequelizeValidationError' || err.name === 'SequelizeUniqueConstraintError') {
+    return res.status(400).json({
+      error: 'Validation Error',
+      message: 'Validation failed',
+      details: err.errors ? err.errors.map(e => ({
+        field: e.path,
+        message: e.message
+      })) : [err.message]
+    });
+  }
+
+  // Handle CORS errors
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'Not allowed by CORS policy'
+    });
+  }
+
+  // Default error response
+  const statusCode = err.statusCode || 500;
+  res.status(statusCode).json({
+    error: err.name || 'Internal Server Error',
+    message: err.message || 'An unexpected error occurred',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
+});
+
+// Database and server initialization
+(async () => {
+  try {
+    // Test database connection
+    await sequelize.authenticate();
+    console.log('Database connection has been established successfully.');
+    
+    // Sync all models
+    await sequelize.sync({ alter: false });
+    console.log('Database synced');
+
+    // Start server
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server is running on port ${PORT}`);
+      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    });
+
+    // Handle server errors
+    server.on('error', (error) => {
+      if (error.syscall !== 'listen') {
+        throw error;
+      }
+
+      switch (error.code) {
+        case 'EACCES':
+          console.error(`Port ${PORT} requires elevated privileges`);
+          process.exit(1);
+          break;
+        case 'EADDRINUSE':
+          console.error(`Port ${PORT} is already in use`);
+          process.exit(1);
+          break;
+        default:
+          throw error;
+      }
+    });
+
+    // Handle unhandled promise rejections
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+      // Consider restarting the process or logging to an external service
+    });
+
+    // Handle uncaught exceptions
+    process.on('uncaughtException', (error) => {
+      console.error('Uncaught Exception:', error);
+      // Consider restarting the process or logging to an external service
+      process.exit(1);
+    });
+
+    // Handle SIGTERM for graceful shutdown
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM received. Shutting down gracefully');
+      server.close(() => {
+        console.log('Process terminated');
+        process.exit(0);
+      });
+    });
+
+  } catch (error) {
+    console.error('Unable to start server:', error);
+    process.exit(1);
+  }
+})();
 
 
 (async () => {
