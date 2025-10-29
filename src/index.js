@@ -97,7 +97,10 @@ const corsOptions = {
       'http://127.0.0.1:5173',
       'http://127.0.0.1:3000',
       'http://localhost:4000',
-      'http://127.0.0.1:4000'
+      'http://127.0.0.1:4000',
+      'http://3.91.212.140:80',
+      'http://3.91.212.140:3000',
+      'http://3.91.212.140:5173'
     ];
 
     // Add any additional origins from environment variable
@@ -120,6 +123,7 @@ const corsOptions = {
     console.log('CORS blocked request from origin:', origin);
     callback(new Error('Not allowed by CORS'));
   },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   credentials: true,
   allowedHeaders: [
     'Content-Type',
@@ -127,7 +131,9 @@ const corsOptions = {
     'X-Requested-With',
     'Accept',
     'Origin',
-    'Access-Control-Allow-Origin'
+    'Access-Control-Allow-Origin',
+    'Access-Control-Allow-Credentials',
+    'X-API-Key'
   ],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   optionsSuccessStatus: 200, // Some legacy browsers (IE11, various SmartTVs) choke on 204
