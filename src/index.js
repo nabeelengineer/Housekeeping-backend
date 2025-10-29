@@ -84,11 +84,11 @@ const apiLimiter = rateLimit({
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps, curl, etc.)
-    if (!origin) {
+    if (!origin && process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
-
-    // List of allowed origins
+    
+    // Check if the origin is in the allowed list or is a localhost URL
     const allowedOrigins = [
       'http://3.91.212.140',
       'https://3.91.212.140',
@@ -97,94 +97,56 @@ const corsOptions = {
       'http://127.0.0.1:5173',
       'http://127.0.0.1:3000',
       'http://localhost:4000',
-      'http://127.0.0.1:4000',
-      'http://3.91.212.140:80',
-      'http://3.91.212.140:3000',
-      'http://3.91.212.140:5173'
+      'http://127.0.0.1:4000'
     ];
-
+    
     // Add any additional origins from environment variable
     const envOrigins = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
     const allAllowedOrigins = [...new Set([...allowedOrigins, ...envOrigins])];
-
-    // Allow all origins in development
-    if (process.env.NODE_ENV === 'development') {
+    
+    if (process.env.NODE_ENV === 'development' || !origin) {
       return callback(null, true);
     }
-
-    // Check if the origin is in the allowed list
-    if (allAllowedOrigins.some(allowed =>
-      origin === allowed ||
+    
+    if (allAllowedOrigins.some(allowed => 
+      origin === allowed || 
       origin.startsWith(allowed.replace(/\*$/, ''))
     )) {
       return callback(null, true);
     }
-
-    console.log('CORS blocked request from origin:', origin);
+    
     callback(new Error('Not allowed by CORS'));
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   credentials: true,
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'Accept',
-    'Origin',
-    'Access-Control-Allow-Origin',
-    'Access-Control-Allow-Credentials',
-    'X-API-Key'
-  ],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   optionsSuccessStatus: 200, // Some legacy browsers (IE11, various SmartTVs) choke on 204
   maxAge: 86400 // 24 hours
 };
 
-// Enable CORS for all routes
+// Apply CORS middleware
 app.use((req, res, next) => {
+  // Set CORS headers for all responses
   const origin = req.headers.origin;
   
   // Check if origin is allowed
-  if (process.env.NODE_ENV === 'development' ||
-      !origin ||
+  if (process.env.NODE_ENV === 'development' || 
+      !origin || 
       corsOptions.origin(origin, () => {}) === true) {
     
-    // Set CORS headers for all responses
+    // Set CORS headers
     res.header('Access-Control-Allow-Origin', origin || '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
     res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Max-Age', '86400');
+    
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
   }
   
-  // Handle preflight requests
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  
-  next();
-});
-
-// Add CORS headers to all responses
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-
-  // Check if origin is allowed
-  if (process.env.NODE_ENV === 'development' ||
-      !origin ||
-      corsOptions.origin(origin, () => {}) === true) {
-
-    // Set CORS headers for actual requests
-    res.header('Access-Control-Allow-Origin', origin || '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-    res.header('Access-Control-Allow-Credentials', 'true');
-  }
-
-  // Handle preflight requests
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
   next();
 });
 
@@ -243,7 +205,7 @@ app.use('/api/me', meRoutes);
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({
+  res.status(404).json({ 
     error: 'Not Found',
     message: 'The requested resource was not found',
     path: req.path
@@ -253,17 +215,17 @@ app.use((req, res) => {
 // Global error handler
 app.use((err, req, res, next) => {
   console.error('Error:', err);
-
+  
   // Handle JWT errors
   if (err.name === 'JsonWebTokenError') {
-    return res.status(401).json({
+    return res.status(401).json({ 
       error: 'Invalid Token',
       message: 'The provided token is invalid'
     });
   }
 
   if (err.name === 'TokenExpiredError') {
-    return res.status(401).json({
+    return res.status(401).json({ 
       error: 'Token Expired',
       message: 'Your session has expired. Please log in again.'
     });
@@ -304,7 +266,7 @@ app.use((err, req, res, next) => {
     // Test database connection
     await sequelize.authenticate();
     console.log('Database connection has been established successfully.');
-
+    
     // Sync all models
     await sequelize.sync({ alter: false });
     console.log('Database synced');
