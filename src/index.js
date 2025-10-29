@@ -5,7 +5,16 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
+const fs = require('fs');
 const { sequelize } = require('./Models');
+
+// Ensure uploads directory exists
+const uploadsDir = path.join(__dirname, '..', 'uploads', 'market');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log('Created uploads directory:', uploadsDir);
+}
 const { Sequelize } = require('sequelize');
 const baseMigration = require('./migrations/20251013_000_base_schema');
 const authRoutes = require('./routes/auth');
@@ -22,7 +31,34 @@ const meRoutes = require('./routes/me');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
+
+// Add logging middleware for static file requests
+app.use('/uploads', (req, res, next) => {
+  console.log('Static file request:', req.path);
+  next();
+});
+
+// Serve static files from uploads directory
+const staticOptions = {
+  setHeaders: (res, path) => {
+    // Set proper cache headers for images
+    if (path.match(/\.(jpg|jpeg|png|webp)$/i)) {
+      res.set('Cache-Control', 'public, max-age=31536000');
+    }
+  }
+};
+
+// Serve static files from the market directory
+const marketPath = path.join(__dirname, '..', 'uploads', 'market');
+console.log('Serving static files from:', marketPath);
+
+app.use('/uploads/market', express.static(marketPath, staticOptions));
+
+// Fallback for any other uploads
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads'), staticOptions));
+
 // Security middleware
 app.use(helmet());
 app.use(helmet.hsts({

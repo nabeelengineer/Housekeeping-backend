@@ -18,7 +18,10 @@ const router = express.Router();
 
 // Ensure upload dir exists
 const uploadDir = path.join(process.cwd(), 'uploads', 'market');
-fs.mkdirSync(uploadDir, { recursive: true });
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+  console.log('Created market upload directory:', uploadDir);
+}
 
 // Update product (seller or admin)
 router.patch('/products/:id', auth, async (req, res) => {
@@ -48,17 +51,20 @@ const storage = multer.diskStorage({
     cb(null, uploadDir);
   },
   filename: function (req, file, cb) {
-    const ext = path.extname(file.originalname);
-    const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, '');
-    cb(null, `${Date.now()}_${base}${ext}`);
+    // Sanitize filename and add timestamp to prevent collisions
+    const sanitizedFilename = file.originalname.replace(/[^a-zA-Z0-9.\-]/g, '_');
+    cb(null, Date.now() + '_' + sanitizedFilename);
   },
 });
 
-function fileFilter(req, file, cb) {
-  const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
-  if (!allowed.includes(file.mimetype)) return cb(new Error('Invalid file type'), false);
-  cb(null, true);
-}
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only JPG, PNG, and WebP images are allowed'), false);
+  }
+};
 
 const upload = multer({ storage, fileFilter, limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -68,7 +74,8 @@ router.post('/products', auth, upload.array('images', 5), async (req, res) => {
     const { name, description, price } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
     const files = req.files || [];
-    if (files.length < 3 || files.length > 5) return res.status(400).json({ error: 'Provide 3-5 images' });
+    if (files.length < 2) return res.status(400).json({ error: 'At least 2 images are required' });
+    if (files.length > 4) return res.status(400).json({ error: 'Maximum 4 images allowed' });
 
     const p = await Product.create({
       seller_id: req.user.employee_id,
