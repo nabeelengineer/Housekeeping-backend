@@ -80,18 +80,23 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// CORS configuration
+// CORS configuration with detailed logging
 const corsOptions = {
   origin: function (origin, callback) {
-    // In development, allow all origins
+    console.log('CORS origin check:', { origin, NODE_ENV: process.env.NODE_ENV });
+    
+    // In development, allow all origins for easier development
     if (process.env.NODE_ENV !== 'production') {
+      console.log('Allowing all origins in development');
       return callback(null, true);
     }
     
     // In production, allow specific origins
     const allowedOrigins = [
       'http://3.91.212.140',
-      'https://3.91.212.140'
+      'https://3.91.212.140',
+      'http://localhost:5173',  // For local testing
+      'http://localhost:3000'   // For local testing
     ];
     
     // Add any additional origins from environment variable
@@ -100,50 +105,67 @@ const corsOptions = {
     
     // Allow requests with no origin (like mobile apps, curl, etc.)
     if (!origin) {
+      console.log('Allowing request with no origin');
       return callback(null, true);
     }
     
     // Check if the origin is allowed
-    if (allAllowedOrigins.some(allowed => 
-      origin === allowed || 
-      origin.startsWith(allowed.replace(/\*$/, ''))
-    )) {
+    const isAllowed = allAllowedOrigins.some(allowed => {
+      const isMatch = origin === allowed || origin.startsWith(allowed.replace(/\*$/, ''));
+      if (isMatch) {
+        console.log(`Origin ${origin} matched allowed origin: ${allowed}`);
+      }
+      return isMatch;
+    });
+    
+    if (isAllowed) {
       return callback(null, true);
     }
     
     console.warn('CORS blocked request from origin:', origin);
-    callback(new Error('Not allowed by CORS'));
+    console.warn('Allowed origins:', allAllowedOrigins);
+    callback(new Error(`Not allowed by CORS. Origin: ${origin}`));
   },
   credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
-  exposedHeaders: ['Content-Length', 'Content-Range'],
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Auth-Token'],
+  exposedHeaders: ['Content-Length', 'Content-Range', 'X-Total-Count'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
   optionsSuccessStatus: 200, // Some legacy browsers (IE11, various SmartTVs) choke on 204
+  preflightContinue: false,
   maxAge: 86400 // 24 hours
 };
 
 // Apply CORS middleware
 app.use((req, res, next) => {
-  // Set CORS headers for all responses
-  const origin = req.headers.origin;
-  
-  // Check if origin is allowed
-  if (process.env.NODE_ENV === 'development' || 
-      !origin || 
-      corsOptions.origin(origin, () => {}) === true) {
-    
-    // Set CORS headers
-    res.header('Access-Control-Allow-Origin', origin || '*');
+  // Log all incoming requests for debugging
+  console.log('Incoming request:', {
+    method: req.method,
+    path: req.path,
+    origin: req.headers.origin,
+    host: req.headers.host,
+    'user-agent': req.headers['user-agent']
+  });
+
+  // Handle OPTIONS (preflight) requests
+  if (req.method === 'OPTIONS') {
+    console.log('Handling OPTIONS preflight request');
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Auth-Token');
     res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Max-Age', '86400');
-    
-    // Handle preflight requests
-    if (req.method === 'OPTIONS') {
-      return res.status(200).end();
-    }
+    res.header('Access-Control-Max-Age', '86400'); // 24 hours
+    return res.status(200).end();
   }
+
+  // For all other requests, set CORS headers
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Expose-Headers', 'Content-Length, Content-Range, X-Total-Count');
+  
+  // Log the response headers for debugging
+  res.on('finish', () => {
+    console.log('Response headers:', res.getHeaders());
+  });
   
   next();
 });
