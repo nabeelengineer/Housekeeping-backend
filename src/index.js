@@ -83,31 +83,27 @@ const apiLimiter = rateLimit({
 // CORS configuration
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl, etc.)
-    if (!origin && process.env.NODE_ENV !== 'production') {
+    // In development, allow all origins
+    if (process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
     
-    // Check if the origin is in the allowed list or is a localhost URL
+    // In production, allow specific origins
     const allowedOrigins = [
       'http://3.91.212.140',
-      'https://3.91.212.140',
-      'http://localhost:5173',
-      'http://localhost:3000',
-      'http://127.0.0.1:5173',
-      'http://127.0.0.1:3000',
-      'http://localhost:4000',
-      'http://127.0.0.1:4000'
+      'https://3.91.212.140'
     ];
     
     // Add any additional origins from environment variable
     const envOrigins = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
     const allAllowedOrigins = [...new Set([...allowedOrigins, ...envOrigins])];
     
-    if (process.env.NODE_ENV === 'development' || !origin) {
+    // Allow requests with no origin (like mobile apps, curl, etc.)
+    if (!origin) {
       return callback(null, true);
     }
     
+    // Check if the origin is allowed
     if (allAllowedOrigins.some(allowed => 
       origin === allowed || 
       origin.startsWith(allowed.replace(/\*$/, ''))
@@ -115,10 +111,12 @@ const corsOptions = {
       return callback(null, true);
     }
     
+    console.warn('CORS blocked request from origin:', origin);
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Content-Length', 'Content-Range'],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   optionsSuccessStatus: 200, // Some legacy browsers (IE11, various SmartTVs) choke on 204
   maxAge: 86400 // 24 hours
