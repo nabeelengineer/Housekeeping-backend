@@ -15,13 +15,6 @@ const baseMigration = require('./migrations/20251013_000_base_schema');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Ensure uploads directory exists
-const uploadsDir = path.join(__dirname, '..', 'uploads', 'market');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-  console.log('Created uploads directory:', uploadsDir);
-}
-
 // Middleware
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
@@ -68,27 +61,47 @@ const meRoutes = require('./routes/me');
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
-// Add logging middleware for static file requests
-app.use('/uploads', (req, res, next) => {
-  console.log('Static file request:', req.path);
-  next();
-});
-
-// Serve static files from uploads directory
+// Configure static file serving with proper headers and logging
 const staticOptions = {
   setHeaders: (res, path) => {
-    // Set proper cache headers for images
-    if (path.match(/\.(jpg|jpeg|png|webp)$/i)) {
-      res.set('Cache-Control', 'public, max-age=31536000');
+    // Set proper cache headers for images and other static files
+    if (path.match(/\.(jpg|jpeg|png|webp|gif|svg)$/i)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
     }
-  }
+    console.log('Serving static file:', path);
+  },
+  dotfiles: 'ignore',
+  etag: true,
+  lastModified: true,
+  fallthrough: false
 };
 
-// Serve static files from the market directory
-const marketPath = path.join(__dirname, '..', 'uploads', 'market');
-console.log('Serving static files from:', marketPath);
-app.use('/uploads/market', express.static(marketPath, staticOptions));
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads'), staticOptions));
+// Create uploads directory if it doesn't exist (in case volume mount fails)
+const uploadsDir = path.join(__dirname, '..', 'uploads');
+const marketDir = path.join(uploadsDir, 'market');
+
+[uploadsDir, marketDir].forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    console.log('Created directory:', dir);
+  }
+});
+
+// Log directory structure for debugging
+console.log('Current working directory:', process.cwd());
+console.log('Uploads directory exists:', fs.existsSync(uploadsDir), uploadsDir);
+console.log('Market directory exists:', fs.existsSync(marketDir), marketDir);
+
+// Serve static files with proper path resolution
+app.use('/uploads', express.static(uploadsDir, staticOptions));
+
+// Add request logging for uploads
+app.use('/uploads', (req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  console.log('Request headers:', JSON.stringify(req.headers, null, 2));
+  next();
+});
 
 // Security middleware
 app.use(helmet());
