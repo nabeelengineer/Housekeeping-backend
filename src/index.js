@@ -87,16 +87,13 @@ const staticOptions = {
 // Serve static files from the market directory
 const marketPath = path.join(__dirname, '..', 'uploads', 'market');
 console.log('Serving static files from:', marketPath);
-
 app.use('/uploads/market', express.static(marketPath, staticOptions));
-
-// Fallback for any other uploads
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads'), staticOptions));
 
 // Security middleware
 app.use(helmet());
 app.use(helmet.hsts({
-  maxAge: 31536000, // 1 year
+  maxAge: 31536000,
   includeSubDomains: true,
   preload: true
 }));
@@ -107,8 +104,8 @@ app.use(morgan('combined'));
 
 // Rate limiting
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // Increased limit for development
+  windowMs: 15 * 60 * 1000,
+  max: 1000, 
   message: 'Too many requests, please try again later',
   standardHeaders: true,
   legacyHeaders: false,
@@ -129,8 +126,8 @@ const corsOptions = {
     const allowedOrigins = [
       'http://3.91.212.140',
       'https://3.91.212.140',
-      'http://localhost:5173',  // For local testing
-      'http://localhost:3000'   // For local testing
+      'http://localhost:5173',
+      'http://localhost:4000' 
     ];
     
     // Add any additional origins from environment variable
