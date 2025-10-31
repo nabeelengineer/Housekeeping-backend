@@ -68,38 +68,80 @@ const staticOptions = {
     if (path.match(/\.(jpg|jpeg|png|webp|gif|svg)$/i)) {
       res.setHeader('Cache-Control', 'public, max-age=31536000');
       res.setHeader('X-Content-Type-Options', 'nosniff');
+      // Set correct content type based on file extension
+      if (path.endsWith('.jpg') || path.endsWith('.jpeg')) {
+        res.setHeader('Content-Type', 'image/jpeg');
+      } else if (path.endsWith('.png')) {
+        res.setHeader('Content-Type', 'image/png');
+      } else if (path.endsWith('.webp')) {
+        res.setHeader('Content-Type', 'image/webp');
+      } else if (path.endsWith('.gif')) {
+        res.setHeader('Content-Type', 'image/gif');
+      } else if (path.endsWith('.svg')) {
+        res.setHeader('Content-Type', 'image/svg+xml');
+      }
     }
     console.log('Serving static file:', path);
   },
   dotfiles: 'ignore',
   etag: true,
   lastModified: true,
-  fallthrough: false
+  fallthrough: false,
+  redirect: false,
+  index: false
 };
 
-// Create uploads directory if it doesn't exist (in case volume mount fails)
-const uploadsDir = path.join(__dirname, '..', 'uploads');
+// Define uploads directory path (one level up from src)
+const rootDir = path.join(__dirname, '..');
+const uploadsDir = path.join(rootDir, 'uploads');
 const marketDir = path.join(uploadsDir, 'market');
 
+// Create directories if they don't exist
 [uploadsDir, marketDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
     console.log('Created directory:', dir);
+  } else {
+    console.log('Directory exists:', dir);
   }
 });
 
+// Debug: List files in uploads directory
+const listFiles = (dir) => {
+  try {
+    const files = fs.readdirSync(dir);
+    console.log(`Files in ${dir}:`, files);
+  } catch (err) {
+    console.error(`Error reading directory ${dir}:`, err);
+  }
+};
+
 // Log directory structure for debugging
 console.log('Current working directory:', process.cwd());
+console.log('Root directory:', rootDir);
 console.log('Uploads directory exists:', fs.existsSync(uploadsDir), uploadsDir);
 console.log('Market directory exists:', fs.existsSync(marketDir), marketDir);
 
-// Serve static files with proper path resolution
-app.use('/uploads', express.static(uploadsDir, staticOptions));
+// List files in uploads directory for debugging
+listFiles(uploadsDir);
+listFiles(marketDir);
 
-// Add request logging for uploads
+// Add request logging middleware first
 app.use('/uploads', (req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-  console.log('Request headers:', JSON.stringify(req.headers, null, 2));
+  console.log('Request path:', req.path);
+  next();
+});
+
+// Serve static files from the market directory directly
+app.use('/uploads/market', express.static(marketDir, staticOptions));
+
+// Fallback to serve from root uploads directory
+app.use('/uploads', express.static(uploadsDir, staticOptions));
+
+// Debug middleware to check if request reaches here
+app.use('/uploads', (req, res, next) => {
+  console.log(`[${new Date().toISOString()}] File not found: ${req.originalUrl}`);
   next();
 });
 
