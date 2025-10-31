@@ -17,6 +17,8 @@ if (!fs.existsSync(uploadsDir)) {
 }
 const { Sequelize } = require('sequelize');
 const baseMigration = require('./migrations/20251013_000_base_schema');
+
+// Import routes
 const authRoutes = require('./routes/auth');
 const deptRoutes = require('./routes/department');
 const catRoutes = require('./routes/categories');
@@ -28,6 +30,33 @@ const notificationRoutes = require('./routes/notifications');
 const assetsRoutes = require('./routes/assets');
 const assignmentsRoutes = require('./routes/assignments');
 const meRoutes = require('./routes/me');
+
+// Enable CORS for all routes
+app.use((req, res, next) => {
+  const allowedOrigins = ['http://3.91.212.140', 'http://localhost:5173'];
+  const origin = req.headers.origin;
+  
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
+// Log all requests
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+});
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -135,38 +164,36 @@ const corsOptions = {
   maxAge: 86400 // 24 hours
 };
 
-// Apply CORS middleware
+// Simple CORS handler - place this before any routes
 app.use((req, res, next) => {
-  // Log all incoming requests for debugging
-  console.log('Incoming request:', {
-    method: req.method,
-    path: req.path,
-    origin: req.headers.origin,
-    host: req.headers.host,
-    'user-agent': req.headers['user-agent']
-  });
-
-  // Handle OPTIONS (preflight) requests
-  if (req.method === 'OPTIONS') {
-    console.log('Handling OPTIONS preflight request');
-    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  
+  // Allow from all origins in development, specific in production
+  const allowedOrigins = process.env.NODE_ENV === 'production' 
+    ? ['http://3.91.212.140', 'https://3.91.212.140']
+    : ['*'];
+    
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes('*') || (origin && allowedOrigins.some(o => origin.startsWith(o)))) {
+    res.header('Access-Control-Allow-Origin', origin || '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Auth-Token');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
     res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Max-Age', '86400'); // 24 hours
-    return res.status(200).end();
+    
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
   }
+  
+  next();
+});
 
-  // For all other requests, set CORS headers
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Expose-Headers', 'Content-Length, Content-Range, X-Total-Count');
-  
-  // Log the response headers for debugging
-  res.on('finish', () => {
-    console.log('Response headers:', res.getHeaders());
+// Log all requests for debugging
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`, {
+    headers: req.headers,
+    body: req.body
   });
-  
   next();
 });
 
