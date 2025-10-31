@@ -8,6 +8,12 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 const { sequelize } = require('./Models');
+const { Sequelize } = require('sequelize');
+const baseMigration = require('./migrations/20251013_000_base_schema');
+
+// Initialize Express app
+const app = express();
+const PORT = process.env.PORT || 4000;
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, '..', 'uploads', 'market');
@@ -15,21 +21,10 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
   console.log('Created uploads directory:', uploadsDir);
 }
-const { Sequelize } = require('sequelize');
-const baseMigration = require('./migrations/20251013_000_base_schema');
 
-// Import routes
-const authRoutes = require('./routes/auth');
-const deptRoutes = require('./routes/department');
-const catRoutes = require('./routes/categories');
-const empRoutes = require('./routes/employees');
-const reqRoutes = require('./routes/request');
-const marketRoutes = require('./routes/market');
-const vehicleRoutes = require('./routes/vehicles');
-const notificationRoutes = require('./routes/notifications');
-const assetsRoutes = require('./routes/assets');
-const assignmentsRoutes = require('./routes/assignments');
-const meRoutes = require('./routes/me');
+// Middleware
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
 // Enable CORS for all routes
 app.use((req, res, next) => {
@@ -58,8 +53,18 @@ app.use((req, res, next) => {
   next();
 });
 
-const app = express();
-const PORT = process.env.PORT || 4000;
+// Import routes after app is initialized
+const authRoutes = require('./routes/auth');
+const deptRoutes = require('./routes/department');
+const catRoutes = require('./routes/categories');
+const empRoutes = require('./routes/employees');
+const reqRoutes = require('./routes/request');
+const marketRoutes = require('./routes/market');
+const vehicleRoutes = require('./routes/vehicles');
+const notificationRoutes = require('./routes/notifications');
+const assetsRoutes = require('./routes/assets');
+const assignmentsRoutes = require('./routes/assignments');
+const meRoutes = require('./routes/me');
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
