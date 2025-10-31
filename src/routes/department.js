@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { Department, Employee } = require('../Models');
-const { auth } = require('../middleware/auth');
+const auth = require('../middleware/auth');
 
 // Public: list departments (no auth) so signup can load options
 router.get('/', async (req, res) => {
@@ -9,16 +9,21 @@ router.get('/', async (req, res) => {
   res.json(list);
 });
 
-// Only admin can create departments
-router.post('/', auth(['admin']), async (req, res) => {
+router.post('/', auth, async (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Access denied. Only Admin' });
+  }
   const { dept_id, dept_name } = req.body;
   const d = await Department.create({ dept_id, dept_name });
   res.status(201).json(d);
 });
 
-// Update department name (admin only)
-router.patch('/:dept_id', auth(['admin']), async (req, res) => {
+// Update department name
+router.patch('/:dept_id', auth, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Access denied. Only Admin' });
+    }
     const { dept_id } = req.params;
     const { dept_name } = req.body;
     if (!dept_name) return res.status(400).json({ error: 'dept_name is required' });

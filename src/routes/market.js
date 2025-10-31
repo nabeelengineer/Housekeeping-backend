@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
-const { auth } = require('../middleware/auth');
+const auth = require('../middleware/auth');
 const { Op } = require('sequelize');
 const {
   Product,
@@ -23,14 +23,12 @@ if (!fs.existsSync(uploadDir)) {
   console.log('Created market upload directory:', uploadDir);
 }
 
-// Update product (seller, admin, or it_admin)
-router.patch('/products/:id', auth(['user', 'admin', 'it_admin']), async (req, res) => {
+// Update product (seller or admin)
+router.patch('/products/:id', auth, async (req, res) => {
   try {
     const p = await Product.findByPk(req.params.id);
     if (!p) return res.status(404).json({ error: 'not found' });
-    if (req.user.role !== 'admin' && req.user.role !== 'it_admin' && p.seller_id !== req.user.employee_id) {
-      return res.status(403).json({ error: 'not allowed' });
-    }
+    if (req.user.role !== 'admin' && p.seller_id !== req.user.employee_id) return res.status(403).json({ error: 'not allowed' });
     if (p.status === 'removed') return res.status(400).json({ error: 'cannot edit removed product' });
 
     const { name, description, price } = req.body || {};
@@ -71,7 +69,7 @@ const fileFilter = (req, file, cb) => {
 const upload = multer({ storage, fileFilter, limits: { fileSize: 5 * 1024 * 1024 } });
 
 // Create product with 3-5 images
-router.post('/products', auth(['user', 'admin', 'it_admin']), upload.array('images', 5), async (req, res) => {
+router.post('/products', auth, upload.array('images', 5), async (req, res) => {
   try {
     const { name, description, price } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
@@ -132,7 +130,7 @@ router.post('/products', auth(['user', 'admin', 'it_admin']), upload.array('imag
 });
 
 // List products (active by default); optional search/sort
-router.get('/products', auth(['user', 'admin', 'it_admin']), async (req, res) => {
+router.get('/products', auth, async (req, res) => {
   try {
     const {
       search = '',
@@ -143,42 +141,20 @@ router.get('/products', auth(['user', 'admin', 'it_admin']), async (req, res) =>
     } = req.query;
 
     const where = {};
-    
-    // For non-admin users, only show active/sold products
-    if (req.user.role !== 'admin' && req.user.role !== 'it_admin') {
-      where.status = { [Op.in]: ['active', 'sold'] };
-    } else if (status) {
-      // For admins and IT-Admins, respect the status filter if provided
+    // By default include both active and sold; always exclude removed unless explicitly asked by admin
+    if (status) {
       where.status = status;
+    } else {
+      where.status = { [Op.in]: ['active', 'sold'] };
     }
-    
     if (sellerId) where.seller_id = sellerId;
-    
-    // Enhanced search to include title and description
-    if (search) {
-      where[Op.or] = [
-        { title: { [Op.iLike]: `%${search}%` } },
-        { description: { [Op.iLike]: `%${search}%` } }
-      ];
-    }
+    if (search) where.name = { [Op.like]: `%${search}%` };
 
     const list = await Product.findAll({
       where,
       order: [[sort, order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC']],
-      include: [
-        { 
-          model: ProductImage, 
-          as: 'images' 
-        },
-        {
-          model: Employee,
-          as: 'seller',
-          attributes: ['employee_id', 'name', 'email', 'phone_no'],
-          required: false
-        }
-      ],
+      include: [{ model: ProductImage, as: 'images' }],
     });
-    
     res.json(list);
   } catch (err) {
     res.status(400).json({ error: err.message });
