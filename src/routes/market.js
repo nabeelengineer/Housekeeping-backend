@@ -16,11 +16,14 @@ const {
 
 const router = express.Router();
 
-// Ensure upload dir exists
-const uploadDir = path.join(process.cwd(), 'uploads', 'market');
+// Ensure upload dir exists - using the same path as in index.js
+const uploadDir = path.join(__dirname, '..', 'uploads', 'market');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
-  console.log('Created market upload directory:', uploadDir);
+  console.log('Market upload directory:', uploadDir);
+  
+  // Debug: List the upload directory
+  console.log('Upload directory contents:', fs.readdirSync(path.join(__dirname, '..', 'uploads')));
 }
 
 // Update product (seller or admin)
